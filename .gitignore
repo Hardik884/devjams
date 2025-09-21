@@ -482,3 +482,7 @@ backtest_results/
 # Cache files
 .cache/
 *.cache
+
+
+
+api-testing.rest

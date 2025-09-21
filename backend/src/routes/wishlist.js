@@ -1,10 +1,37 @@
 const express = require('express');
+const { validationResult } = require('express-validator');
+const { protect } = require('../middleware/auth');
+const {
+  getWishlist,
+  addStockToWishlist,
+  removeStockFromWishlist,
+  updateStockInWishlist,
+  updateWishlistSettings,
+} = require('../controllers/wishlistController');
+const {
+  addStockValidation,
+  removeStockValidation,
+  updateStockValidation,
+  updateWishlistValidation,
+} = require('../validators/wishlistValidators');
+
 const router = express.Router();
-const Wishlist = require('../models/Wishlist');
-const Stock = require('../models/Stock');
-const { protect: auth } = require('../middleware/auth');
-const { body, param, validationResult } = require('express-validator');
-const logger = require('../utils/logger');
+
+// Middleware to handle validation errors
+const handleValidationErrors = (req, res, next) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      message: 'Validation failed',
+      errors: errors.array(),
+    });
+  }
+  next();
+};
+
+// All routes are protected
+router.use(protect);
 
 /**
  * @swagger
@@ -25,6 +52,22 @@ const logger = require('../utils/logger');
  *         alertPrice:
  *           type: number
  *           description: Price alert threshold
+ *         currentPrice:
+ *           type: number
+ *           description: Current stock price
+ *         priceChange:
+ *           type: number
+ *           description: Price change from previous close
+ *         priceChangePercent:
+ *           type: string
+ *           description: Percentage price change
+ *         targetPriceStatus:
+ *           type: string
+ *           enum: [reached, pending]
+ *           description: Target price status
+ *         targetPriceDistance:
+ *           type: string
+ *           description: Distance to target price in percentage
  *     Wishlist:
  *       type: object
  *       properties:
@@ -45,6 +88,15 @@ const logger = require('../utils/logger');
  *           type: array
  *           items:
  *             type: string
+ *         userId:
+ *           type: string
+ *           description: User ID who owns the wishlist
+ *         createdAt:
+ *           type: string
+ *           format: date-time
+ *         updatedAt:
+ *           type: string
+ *           format: date-time
  */
 
 /**
@@ -54,64 +106,23 @@ const logger = require('../utils/logger');
  *     summary: Get user's wishlist
  *     tags: [Wishlist]
  *     security:
- *       - BearerAuth: []
+ *       - bearerAuth: []
  *     responses:
  *       200:
  *         description: User's wishlist with stock details
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   $ref: '#/components/schemas/Wishlist'
  *       404:
  *         description: Wishlist not found
  */
-router.get('/', auth, async (req, res) => {
-  try {
-    let wishlist = await Wishlist.findByUser(req.user.id);
-    
-    if (!wishlist) {
-      // Create default wishlist for user
-      wishlist = await Wishlist.createForUser(req.user.id);
-    }
-
-    // Populate stock details for each item
-    await wishlist.populate('items.stock');
-
-    // Add current stock prices and calculate performance
-    const enrichedItems = await Promise.all(
-      wishlist.items.map(async (item) => {
-        const stock = item.stock;
-        if (!stock) return item;
-
-        const itemObj = item.toObject();
-        itemObj.currentPrice = stock.price?.current || 0;
-        itemObj.priceChange = stock.price?.current - stock.price?.previousClose || 0;
-        itemObj.priceChangePercent = stock.price?.previousClose 
-          ? ((stock.price.current - stock.price.previousClose) / stock.price.previousClose * 100).toFixed(2)
-          : 0;
-        
-        // Calculate target price status
-        if (itemObj.targetPrice) {
-          itemObj.targetPriceStatus = itemObj.currentPrice >= itemObj.targetPrice ? 'reached' : 'pending';
-          itemObj.targetPriceDistance = ((itemObj.targetPrice - itemObj.currentPrice) / itemObj.currentPrice * 100).toFixed(2);
-        }
-
-        return itemObj;
-      })
-    );
-
-    res.json({
-      success: true,
-      data: {
-        ...wishlist.toObject(),
-        items: enrichedItems,
-      },
-    });
-  } catch (error) {
-    logger.error('Error fetching wishlist:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching wishlist',
-      error: error.message,
-    });
-  }
-});
+router.get('/', getWishlist);
 
 /**
  * @swagger
@@ -120,7 +131,7 @@ router.get('/', auth, async (req, res) => {
  *     summary: Add stock to wishlist
  *     tags: [Wishlist]
  *     security:
- *       - BearerAuth: []
+ *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
@@ -142,76 +153,26 @@ router.get('/', auth, async (req, res) => {
  *               alertPrice:
  *                 type: number
  *                 example: 2400
+ *     responses:
+ *       201:
+ *         description: Stock added to wishlist successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   $ref: '#/components/schemas/Wishlist'
+ *       404:
+ *         description: Stock not found
+ *       409:
+ *         description: Stock already in wishlist
  */
-router.post('/stocks', [
-  auth,
-  body('symbol').notEmpty().withMessage('Stock symbol is required').isString(),
-  body('notes').optional().isLength({ max: 500 }).withMessage('Notes must be less than 500 characters'),
-  body('targetPrice').optional().isFloat({ min: 0 }).withMessage('Target price must be positive'),
-  body('alertPrice').optional().isFloat({ min: 0 }).withMessage('Alert price must be positive'),
-], async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        message: 'Validation failed',
-        errors: errors.array(),
-      });
-    }
-
-    const { symbol, notes, targetPrice, alertPrice } = req.body;
-
-    // Check if stock exists in our database
-    const stock = await Stock.findOne({ symbol: symbol.toUpperCase() });
-    if (!stock) {
-      return res.status(404).json({
-        success: false,
-        message: `Indian stock ${symbol.toUpperCase()} not found in our database`,
-      });
-    }
-
-    // Get or create user's wishlist
-    let wishlist = await Wishlist.findByUser(req.user.id);
-    if (!wishlist) {
-      wishlist = await Wishlist.createForUser(req.user.id);
-    }
-
-    // Add stock to wishlist
-    await wishlist.addStock({
-      stockId: stock._id,
-      symbol: symbol.toUpperCase(),
-      notes,
-      targetPrice,
-      alertPrice,
-    });
-
-    // Return the updated wishlist
-    await wishlist.populate('items.stock');
-
-    res.status(201).json({
-      success: true,
-      message: `Stock ${symbol.toUpperCase()} added to wishlist successfully`,
-      data: wishlist,
-    });
-
-  } catch (error) {
-    logger.error('Error adding stock to wishlist:', error);
-    
-    if (error.message.includes('already in your wishlist')) {
-      return res.status(409).json({
-        success: false,
-        message: error.message,
-      });
-    }
-
-    res.status(500).json({
-      success: false,
-      message: 'Error adding stock to wishlist',
-      error: error.message,
-    });
-  }
-});
+router.post('/stocks', addStockValidation, handleValidationErrors, addStockToWishlist);
 
 /**
  * @swagger
@@ -220,7 +181,7 @@ router.post('/stocks', [
  *     summary: Remove stock from wishlist
  *     tags: [Wishlist]
  *     security:
- *       - BearerAuth: []
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: symbol
@@ -228,56 +189,24 @@ router.post('/stocks', [
  *         schema:
  *           type: string
  *         description: Stock symbol to remove
+ *     responses:
+ *       200:
+ *         description: Stock removed from wishlist successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   $ref: '#/components/schemas/Wishlist'
+ *       404:
+ *         description: Wishlist or stock not found
  */
-router.delete('/stocks/:symbol', [
-  auth,
-  param('symbol').notEmpty().withMessage('Stock symbol is required'),
-], async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        message: 'Validation failed',
-        errors: errors.array(),
-      });
-    }
-
-    const { symbol } = req.params;
-
-    const wishlist = await Wishlist.findByUser(req.user.id);
-    if (!wishlist) {
-      return res.status(404).json({
-        success: false,
-        message: 'Wishlist not found',
-      });
-    }
-
-    await wishlist.removeStock(symbol);
-
-    res.json({
-      success: true,
-      message: `Stock ${symbol.toUpperCase()} removed from wishlist successfully`,
-      data: wishlist,
-    });
-
-  } catch (error) {
-    logger.error('Error removing stock from wishlist:', error);
-    
-    if (error.message.includes('not found in wishlist')) {
-      return res.status(404).json({
-        success: false,
-        message: error.message,
-      });
-    }
-
-    res.status(500).json({
-      success: false,
-      message: 'Error removing stock from wishlist',
-      error: error.message,
-    });
-  }
-});
+router.delete('/stocks/:symbol', removeStockValidation, handleValidationErrors, removeStockFromWishlist);
 
 /**
  * @swagger
@@ -286,7 +215,7 @@ router.delete('/stocks/:symbol', [
  *     summary: Update stock in wishlist
  *     tags: [Wishlist]
  *     security:
- *       - BearerAuth: []
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: symbol
@@ -307,61 +236,24 @@ router.delete('/stocks/:symbol', [
  *                 type: number
  *               alertPrice:
  *                 type: number
+ *     responses:
+ *       200:
+ *         description: Stock updated in wishlist successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   $ref: '#/components/schemas/Wishlist'
+ *       404:
+ *         description: Wishlist or stock not found
  */
-router.put('/stocks/:symbol', [
-  auth,
-  param('symbol').notEmpty().withMessage('Stock symbol is required'),
-  body('notes').optional().isLength({ max: 500 }).withMessage('Notes must be less than 500 characters'),
-  body('targetPrice').optional().isFloat({ min: 0 }).withMessage('Target price must be positive'),
-  body('alertPrice').optional().isFloat({ min: 0 }).withMessage('Alert price must be positive'),
-], async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        message: 'Validation failed',
-        errors: errors.array(),
-      });
-    }
-
-    const { symbol } = req.params;
-    const updateData = req.body;
-
-    const wishlist = await Wishlist.findByUser(req.user.id);
-    if (!wishlist) {
-      return res.status(404).json({
-        success: false,
-        message: 'Wishlist not found',
-      });
-    }
-
-    await wishlist.updateItem(symbol, updateData);
-    await wishlist.populate('items.stock');
-
-    res.json({
-      success: true,
-      message: `Stock ${symbol.toUpperCase()} updated in wishlist successfully`,
-      data: wishlist,
-    });
-
-  } catch (error) {
-    logger.error('Error updating stock in wishlist:', error);
-    
-    if (error.message.includes('not found in wishlist')) {
-      return res.status(404).json({
-        success: false,
-        message: error.message,
-      });
-    }
-
-    res.status(500).json({
-      success: false,
-      message: 'Error updating stock in wishlist',
-      error: error.message,
-    });
-  }
-});
+router.put('/stocks/:symbol', updateStockValidation, handleValidationErrors, updateStockInWishlist);
 
 /**
  * @swagger
@@ -370,7 +262,7 @@ router.put('/stocks/:symbol', [
  *     summary: Update wishlist settings
  *     tags: [Wishlist]
  *     security:
- *       - BearerAuth: []
+ *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
@@ -388,46 +280,21 @@ router.put('/stocks/:symbol', [
  *                 type: array
  *                 items:
  *                   type: string
+ *     responses:
+ *       200:
+ *         description: Wishlist updated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   $ref: '#/components/schemas/Wishlist'
  */
-router.put('/', [
-  auth,
-  body('name').optional().isLength({ min: 1, max: 100 }).withMessage('Name must be 1-100 characters'),
-  body('description').optional().isLength({ max: 500 }).withMessage('Description must be less than 500 characters'),
-  body('isPublic').optional().isBoolean().withMessage('isPublic must be a boolean'),
-  body('tags').optional().isArray().withMessage('Tags must be an array'),
-], async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        message: 'Validation failed',
-        errors: errors.array(),
-      });
-    }
-
-    let wishlist = await Wishlist.findByUser(req.user.id);
-    if (!wishlist) {
-      wishlist = await Wishlist.createForUser(req.user.id, req.body);
-    } else {
-      Object.assign(wishlist, req.body);
-      await wishlist.save();
-    }
-
-    res.json({
-      success: true,
-      message: 'Wishlist updated successfully',
-      data: wishlist,
-    });
-
-  } catch (error) {
-    logger.error('Error updating wishlist:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error updating wishlist',
-      error: error.message,
-    });
-  }
-});
+router.put('/', updateWishlistValidation, handleValidationErrors, updateWishlistSettings);
 
 module.exports = router;

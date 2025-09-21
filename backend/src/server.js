@@ -7,8 +7,8 @@ const rateLimit = require('express-rate-limit');
 const swaggerJSDoc = require('swagger-jsdoc');
 const swaggerUi = require('swagger-ui-express');
 
-// Load environment variables from .env.development
-require('dotenv').config({ path: '.env.development' });
+// Load environment variables from .env
+require('dotenv').config();
 
 const logger = require('./utils/logger');
 const errorHandler = require('./middleware/errorHandler');
