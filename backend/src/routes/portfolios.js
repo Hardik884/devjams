@@ -209,6 +209,7 @@ router.post('/', [
       assets,
       weights,
       initialBalance,
+      currentBalance,
       currency,
       riskProfile,
       constraints,
@@ -253,6 +254,7 @@ router.post('/', [
       assets,
       weights,
       initialBalance,
+      currentBalance: currentBalance || initialBalance, // Use provided currentBalance or default to initialBalance
       currency: currency || 'USD',
       riskProfile: riskProfile || {},
       constraints: constraints || {},
@@ -611,6 +613,8 @@ router.post('/:id/rebalance', [
  *         description: Invalid file or data format
  */
 router.post('/import', uploadPortfolioFile, handleUploadError, async (req, res, next) => {
+
+
   let filePath = null;
   
   try {

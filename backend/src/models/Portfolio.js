@@ -51,13 +51,14 @@ const portfolioSchema = new mongoose.Schema({
   },
   currentBalance: {
     type: Number,
-    required: true,
+    required: false, // Will be set by pre-save middleware if not provided
     min: [0, 'Current balance must be positive'],
   },
   currency: {
     type: String,
-    default: 'USD',
+    default: 'INR', // Changed to Indian Rupees
     uppercase: true,
+    enum: ['INR'], // Only allow INR for Indian market
     minlength: [3, 'Currency must be 3 characters'],
     maxlength: [3, 'Currency must be 3 characters'],
   },
@@ -176,8 +177,13 @@ portfolioSchema.index({ userId: 1, name: 1 }, { unique: true });
 
 // Pre-save middleware
 portfolioSchema.pre('save', function(next) {
-  // Set currentBalance to initialBalance on creation
-  if (this.isNew && !this.currentBalance) {
+  // Set currentBalance to initialBalance on creation if not provided
+  if (this.isNew && (this.currentBalance === undefined || this.currentBalance === null)) {
+    this.currentBalance = this.initialBalance;
+  }
+  
+  // Ensure currentBalance is never null or undefined
+  if (this.currentBalance === undefined || this.currentBalance === null) {
     this.currentBalance = this.initialBalance;
   }
   
