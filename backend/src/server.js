@@ -18,10 +18,6 @@ const { connectDatabase } = require('./config/database');
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
 const portfolioRoutes = require('./routes/portfolios');
-const rebalanceRoutes = require('./routes/rebalance');
-const analyticsRoutes = require('./routes/analytics');
-const marketRoutes = require('./routes/market');
-const adminRoutes = require('./routes/admin');
 
 const app = express();
 const PORT = process.env.PORT || 8000;
@@ -110,10 +106,6 @@ app.get('/', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/portfolios', portfolioRoutes);
-app.use('/api/rebalance', rebalanceRoutes);
-app.use('/api/analytics', analyticsRoutes);
-app.use('/api/market', marketRoutes);
-app.use('/api/admin', adminRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {

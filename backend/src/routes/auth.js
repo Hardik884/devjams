@@ -185,8 +185,8 @@ router.post('/login', [
 
     const { email, password } = req.body;
 
-    // Check for user
-    const user = await User.findOne({ email });
+    // Check for user - include password field for comparison
+    const user = await User.findOne({ email }).select('+password');
     if (!user) {
       return res.status(401).json({
         success: false,

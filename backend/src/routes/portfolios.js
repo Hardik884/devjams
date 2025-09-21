@@ -4,6 +4,8 @@ const Portfolio = require('../models/Portfolio');
 const User = require('../models/User');
 const logger = require('../utils/logger');
 const { protect } = require('../middleware/auth');
+const { uploadPortfolioFile, handleUploadError, cleanupFile } = require('../middleware/fileUpload');
+const { parseExcelFile, fetchCurrentPrices, calculatePortfolioMetrics } = require('../services/portfolioImport');
 
 const router = express.Router();
 
@@ -554,6 +556,191 @@ router.post('/:id/rebalance', [
     });
   } catch (error) {
     next(error);
+  }
+});
+
+/**
+ * @swagger
+ * /api/portfolios/import:
+ *   post:
+ *     summary: Import portfolio from Excel file
+ *     tags: [Portfolios]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               portfolioFile:
+ *                 type: string
+ *                 format: binary
+ *                 description: Excel file with portfolio data (.xlsx, .xls, .csv)
+ *               name:
+ *                 type: string
+ *                 description: Portfolio name
+ *               description:
+ *                 type: string
+ *                 description: Portfolio description
+ *     responses:
+ *       201:
+ *         description: Portfolio imported successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   $ref: '#/components/schemas/Portfolio'
+ *                 summary:
+ *                   type: object
+ *                   properties:
+ *                     totalAssets:
+ *                       type: number
+ *                     totalValue:
+ *                       type: number
+ *                     totalReturn:
+ *                       type: number
+ *                     totalReturnPct:
+ *                       type: number
+ *       400:
+ *         description: Invalid file or data format
+ */
+router.post('/import', uploadPortfolioFile, handleUploadError, async (req, res, next) => {
+  let filePath = null;
+  
+  try {
+    // Check if file was uploaded
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        error: 'No file uploaded. Please upload an Excel file (.xlsx, .xls) or CSV file.',
+      });
+    }
+    
+    filePath = req.file.path;
+    const { name, description } = req.body;
+    
+    // Validate portfolio name
+    if (!name || name.trim().length < 2) {
+      return res.status(400).json({
+        success: false,
+        error: 'Portfolio name is required and must be at least 2 characters.',
+      });
+    }
+    
+    // Check for duplicate portfolio name
+    const existingPortfolio = await Portfolio.findOne({
+      userId: req.user.id,
+      name: name.trim(),
+    });
+    
+    if (existingPortfolio) {
+      return res.status(400).json({
+        success: false,
+        error: 'Portfolio with this name already exists.',
+      });
+    }
+    
+    // Parse Excel file
+    logger.info(`Parsing portfolio file: ${req.file.originalname}`);
+    const portfolioData = parseExcelFile(filePath);
+    
+    if (portfolioData.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'No valid portfolio data found in the file.',
+      });
+    }
+    
+    // Extract unique symbols
+    const symbols = [...new Set(portfolioData.map(item => item.symbol))];
+    
+    // Fetch current prices
+    logger.info(`Fetching current prices for ${symbols.length} symbols: ${symbols.join(', ')}`);
+    const currentPrices = await fetchCurrentPrices(symbols);
+    
+    // Check if we got prices for all symbols
+    const missingPrices = symbols.filter(symbol => currentPrices[symbol] === null);
+    if (missingPrices.length > 0) {
+      logger.warn(`Could not fetch prices for: ${missingPrices.join(', ')}`);
+    }
+    
+    // Calculate portfolio metrics
+    const metrics = calculatePortfolioMetrics(portfolioData, currentPrices);
+    
+    // Create portfolio
+    const portfolio = new Portfolio({
+      name: name.trim(),
+      description: description?.trim() || '',
+      userId: req.user.id,
+      assets: metrics.assets,
+      weights: metrics.weights,
+      initialBalance: metrics.initialBalance,
+      currentBalance: metrics.currentBalance,
+      currency: 'USD', // Default to USD, can be made configurable
+      metadata: {
+        createdVia: 'excel-import',
+        importedAt: new Date(),
+        originalFileName: req.file.originalname,
+        holdings: metrics.holdings,
+        importSummary: {
+          totalAssets: metrics.assets.length,
+          totalHoldings: portfolioData.length,
+          missingPrices: missingPrices,
+          totalReturn: metrics.totalReturn,
+          totalReturnPct: metrics.totalReturnPct,
+        }
+      },
+    });
+    
+    await portfolio.save();
+    
+    logger.info(`Portfolio imported successfully: ${name} by user ${req.user.email}`);
+    
+    res.status(201).json({
+      success: true,
+      data: portfolio,
+      summary: {
+        totalAssets: metrics.assets.length,
+        totalValue: metrics.currentBalance,
+        totalReturn: metrics.totalReturn,
+        totalReturnPct: metrics.totalReturnPct,
+        missingPrices: missingPrices,
+        holdings: metrics.holdings,
+      },
+    });
+    
+  } catch (error) {
+    logger.error('Portfolio import error:', error);
+    
+    // Return specific error messages for common issues
+    if (error.message.includes('parse')) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid file format or structure. Please check your Excel file.',
+        details: error.message,
+      });
+    }
+    
+    if (error.message.includes('fetch')) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to fetch current stock prices. Please try again later.',
+        details: error.message,
+      });
+    }
+    
+    next(error);
+  } finally {
+    // Clean up uploaded file
+    if (filePath) {
+      cleanupFile(filePath);
+    }
   }
 });
 
