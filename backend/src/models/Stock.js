@@ -255,7 +255,7 @@ stockSchema.statics.getTrendingStocks = function(limit = 50) {
   return this.find({ isActive: true })
     .sort({ 'trending.score': -1, 'trending.rank': 1 })
     .limit(limit)
-    .select('symbol name exchange price.current returns.oneDay trending marketCap');
+    .select('symbol name exchange price.current returns.oneDay trending marketCap lastUpdated');
 };
 
 stockSchema.statics.searchStocks = function(query, limit = 20) {

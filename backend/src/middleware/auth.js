@@ -103,8 +103,20 @@ const optionalAuth = async (req, res, next) => {
   }
 };
 
+// Admin only middleware - shortcut for authorize('admin')
+const adminOnly = (req, res, next) => {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({
+      success: false,
+      error: 'Admin access required',
+    });
+  }
+  next();
+};
+
 module.exports = {
   protect,
   authorize,
   optionalAuth,
+  adminOnly,
 };

@@ -14,7 +14,10 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# Python lib directories (but not Flutter lib/)
+**/python/lib/
+**/venv/lib/
+**/env/lib/
 lib64/
 parts/
 sdist/
@@ -333,11 +336,19 @@ app.*.map.json
 
 # Data files
 *.csv
-*.json
+data*.json
+results*.json
+training*.json
 *.parquet
 *.feather
 *.xlsx
 *.xls
+
+# Allow important project files
+!package.json
+!package-lock.json
+!tsconfig.json
+!jsconfig.json
 
 # Large datasets
 data/
@@ -482,3 +493,7 @@ backtest_results/
 # Cache files
 .cache/
 *.cache
+
+
+
+api-testing.rest
