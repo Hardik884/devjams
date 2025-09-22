@@ -90,13 +90,81 @@ const searchStocks = async (req, res, next) => {
   try {
     const { q, limit = 20 } = req.query;
 
-    const results = await Stock.searchStocks(q, limit);
+    // First, search in our database
+    const databaseResults = await Stock.searchStocks(q, limit);
+
+    // If query looks like a stock symbol (short, uppercase) and we have few results,
+    // try to fetch it directly from the API
+    let externalResult = null;
+    const isLikelySymbol = q && q.length >= 2 && q.length <= 10 && /^[A-Z0-9]+$/i.test(q);
+    
+    if (isLikelySymbol && databaseResults.length < 3) {
+      try {
+        logger.info(`Searching for stock symbol: ${q.toUpperCase()}`);
+        
+        // Try to fetch stock data from external API
+        const stockData = await stockDataService.getCompleteStockData(q.toUpperCase());
+        
+        if (stockData && stockData.symbol) {
+          // Check if this stock already exists in our database
+          const existingStock = await Stock.findOne({ symbol: stockData.symbol });
+          
+          if (!existingStock) {
+            // Add this new stock to our database with complete data
+            const newStock = await Stock.create({
+              ...stockData,
+              isActive: true,
+              lastUpdated: new Date(),
+            });
+            
+            // Fetch and store historical data in background (don't wait for it)
+            setImmediate(async () => {
+              try {
+                logger.info(`📊 Fetching historical data for newly discovered stock: ${stockData.symbol}`);
+                
+                // Fetch multiple periods of historical data
+                const periods = ['1mo', '3mo', '6mo', '1y'];
+                for (const period of periods) {
+                  await stockDataService.fetchHistoricalPrices(stockData.symbol, period);
+                }
+                
+                // Fetch technical indicators
+                await stockDataService.fetchTechnicalIndicators(stockData.symbol);
+                
+                logger.info(`✅ Background data fetch completed for ${stockData.symbol}`);
+              } catch (bgError) {
+                logger.warn(`⚠️ Background data fetch failed for ${stockData.symbol}:`, bgError.message);
+              }
+            });
+            
+            externalResult = newStock;
+            logger.info(`✅ Added new Indian stock to database: ${stockData.symbol}`);
+          }
+        }
+      } catch (apiError) {
+        logger.warn(`Could not fetch external stock data for ${q}:`, apiError.message);
+        // Don't throw error, just continue with database results
+      }
+    }
+
+    // Combine results, avoiding duplicates
+    let allResults = [...databaseResults];
+    if (externalResult && !databaseResults.find(stock => stock.symbol === externalResult.symbol)) {
+      allResults.unshift(externalResult); // Add at the beginning
+    }
+
+    // Limit final results
+    allResults = allResults.slice(0, limit);
 
     res.json({
       success: true,
-      count: results.length,
-      data: results,
+      count: allResults.length,
+      data: allResults,
       query: q,
+      sources: {
+        database: databaseResults.length,
+        external: externalResult ? 1 : 0
+      }
     });
   } catch (error) {
     next(error);
@@ -185,6 +253,28 @@ const getStockBySymbol = async (req, res, next) => {
           updateData,
           { upsert: true, new: true }
         );
+        
+        // If this is a new stock (upsert created it), fetch background data
+        if (!existingStock) {
+          setImmediate(async () => {
+            try {
+              logger.info(`📊 Fetching comprehensive data for newly discovered stock: ${symbol}`);
+              
+              // Fetch multiple periods of historical data
+              const periods = ['1mo', '3mo', '6mo', '1y'];
+              for (const period of periods) {
+                await stockDataService.fetchHistoricalPrices(symbol, period);
+              }
+              
+              // Fetch technical indicators
+              await stockDataService.fetchTechnicalIndicators(symbol);
+              
+              logger.info(`✅ Background comprehensive data fetch completed for ${symbol}`);
+            } catch (bgError) {
+              logger.warn(`⚠️ Background data fetch failed for ${symbol}:`, bgError.message);
+            }
+          });
+        }
         
         dataSource = 'yahoo_finance_api'; // Data came from API
         logger.info(`✅ Successfully fetched fresh data for ${symbol} from Yahoo Finance`);
@@ -336,12 +426,124 @@ const getExchanges = async (req, res, next) => {
   }
 };
 
+/**
+ * Get historical price data for a stock
+ */
+const getStockHistoricalData = async (req, res, next) => {
+  try {
+    const { symbol } = req.params;
+    const { period = '1mo', interval = '1d' } = req.query;
+
+    logger.info(`Fetching historical data for ${symbol} (${period}, ${interval})`);
+
+    // Get historical data from the service
+    const historicalData = await stockDataService.fetchHistoricalPrices(symbol, period, interval);
+
+    if (!historicalData || historicalData.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'No historical data found for this stock',
+      });
+    }
+
+    res.json({
+      success: true,
+      symbol: symbol.toUpperCase(),
+      period,
+      interval,
+      count: historicalData.length,
+      data: historicalData,
+    });
+  } catch (error) {
+    if (error.message.includes('not found')) {
+      return res.status(404).json({
+        success: false,
+        error: 'Stock not found',
+      });
+    }
+    next(error);
+  }
+};
+
+/**
+ * Refresh comprehensive data for a stock
+ */
+const refreshStockData = async (req, res, next) => {
+  try {
+    const { symbol } = req.params;
+    
+    logger.info(`🔄 Manual refresh requested for stock: ${symbol}`);
+
+    // Check if stock exists
+    const stock = await Stock.findOne({ symbol: symbol.toUpperCase() });
+    if (!stock) {
+      return res.status(404).json({
+        success: false,
+        error: 'Stock not found in database',
+      });
+    }
+
+    // Respond immediately
+    res.json({
+      success: true,
+      message: 'Data refresh initiated in background',
+      symbol: symbol.toUpperCase(),
+    });
+
+    // Start comprehensive data refresh in background
+    setImmediate(async () => {
+      try {
+        logger.info(`📊 Starting comprehensive refresh for ${symbol}`);
+        
+        // 1. Refresh current stock data
+        const stockData = await stockDataService.getCompleteStockData(symbol);
+        if (stockData) {
+          await Stock.findOneAndUpdate(
+            { symbol: symbol.toUpperCase() },
+            { ...stockData, lastUpdated: new Date() },
+            { new: true }
+          );
+          logger.info(`✅ Updated current data for ${symbol}`);
+        }
+
+        // 2. Fetch historical data for multiple periods
+        const periods = ['1d', '5d', '1mo', '3mo', '6mo', '1y', 'max'];
+        for (const period of periods) {
+          try {
+            await stockDataService.fetchHistoricalPrices(symbol, period);
+            logger.info(`✅ Fetched ${period} historical data for ${symbol}`);
+          } catch (periodError) {
+            logger.warn(`⚠️ Failed to fetch ${period} data for ${symbol}:`, periodError.message);
+          }
+        }
+
+        // 3. Fetch technical indicators
+        try {
+          await stockDataService.fetchTechnicalIndicators(symbol);
+          logger.info(`✅ Updated technical indicators for ${symbol}`);
+        } catch (techError) {
+          logger.warn(`⚠️ Failed to fetch technical data for ${symbol}:`, techError.message);
+        }
+
+        logger.info(`🎉 Comprehensive refresh completed for ${symbol}`);
+      } catch (refreshError) {
+        logger.error(`❌ Comprehensive refresh failed for ${symbol}:`, refreshError.message);
+      }
+    });
+
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getTrendingStocks,
   searchStocks,
   getTopPerformers,
   getStockBySymbol,
   getStockTechnicals,
+  getStockHistoricalData,
+  refreshStockData,
   getWatchlist,
   addToWatchlist,
   getExchanges,

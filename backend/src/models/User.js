@@ -121,15 +121,25 @@ userSchema.index({ isActive: 1 });
 
 // Pre-save middleware to hash password
 userSchema.pre('save', async function(next) {
+  console.log('🔧 Pre-save middleware triggered');
+  console.log('🔧 Password modified:', this.isModified('password'));
+  console.log('🔧 JWT_SECRET_KEY in pre-save:', !!process.env.JWT_SECRET_KEY);
+  
   // Only hash the password if it has been modified (or is new)
-  if (!this.isModified('password')) return next();
+  if (!this.isModified('password')) {
+    console.log('🔧 Password not modified, skipping hash');
+    return next();
+  }
 
   try {
+    console.log('🔧 Starting password hash...');
     // Hash password with cost of 12
     const salt = await bcrypt.genSalt(12);
     this.password = await bcrypt.hash(this.password, salt);
+    console.log('🔧 Password hashed successfully');
     next();
   } catch (error) {
+    console.error('🔧 Error in pre-save middleware:', error);
     next(error);
   }
 });
@@ -141,6 +151,15 @@ userSchema.methods.matchPassword = async function(enteredPassword) {
 
 // Instance method to generate JWT token
 userSchema.methods.getSignedJwtToken = function() {
+  console.log('🔑 Generating JWT token...');
+  console.log('JWT_SECRET_KEY exists:', !!process.env.JWT_SECRET_KEY);
+  console.log('JWT_SECRET_KEY value:', process.env.JWT_SECRET_KEY ? '[HIDDEN]' : 'UNDEFINED');
+  
+  if (!process.env.JWT_SECRET_KEY) {
+    console.error('❌ JWT_SECRET_KEY is undefined during token generation!');
+    throw new Error('JWT_SECRET_KEY is not configured');
+  }
+  
   return jwt.sign(
     { 
       id: this._id,

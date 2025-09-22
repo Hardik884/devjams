@@ -6,6 +6,7 @@ const {
   getPortfolios,
   createPortfolio,
   getPortfolioById,
+  getPortfolioAnalytics,
   updatePortfolio,
   deletePortfolio,
   rebalancePortfolio,
@@ -201,7 +202,59 @@ router.post('/', createPortfolioValidation, handleValidationErrors, createPortfo
  *       404:
  *         description: Portfolio not found
  */
-router.get('/:id', getPortfolioValidation, handleValidationErrors, getPortfolioById);
+router.get('/:id', protect, getPortfolioById);
+
+/**
+ * @swagger
+ * /api/portfolios/{id}/analytics:
+ *   get:
+ *     summary: Get portfolio performance analytics and charts data
+ *     tags: [Portfolios]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Portfolio ID
+ *       - in: query
+ *         name: period
+ *         schema:
+ *           type: string
+ *           enum: [1d, 5d, 1mo, 3mo, 6mo, 1y, max]
+ *           default: 1mo
+ *         description: Time period for performance analysis
+ *     responses:
+ *       200:
+ *         description: Portfolio analytics data
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     performance:
+ *                       type: object
+ *                       description: Performance metrics over time
+ *                     allocation:
+ *                       type: object
+ *                       description: Current asset allocation
+ *                     holdings:
+ *                       type: array
+ *                       description: Individual stock details with current values
+ *                     timeline:
+ *                       type: array
+ *                       description: Historical performance data for charts
+ *       404:
+ *         description: Portfolio not found
+ */
+router.get('/:id/analytics', protect, getPortfolioAnalytics);
 
 /**
  * @swagger

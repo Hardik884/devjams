@@ -7,6 +7,8 @@ const {
   getTopPerformers,
   getStockBySymbol,
   getStockTechnicals,
+  getStockHistoricalData,
+  refreshStockData,
   getWatchlist,
   addToWatchlist,
   getExchanges,
@@ -232,6 +234,104 @@ router.get('/:symbol', getStockBySymbolValidation, handleValidationErrors, getSt
  *         description: Stock not found
  */
 router.get('/:symbol/technicals', getStockTechnicalsValidation, handleValidationErrors, getStockTechnicals);
+
+/**
+ * @swagger
+ * /api/stocks/{symbol}/historical:
+ *   get:
+ *     summary: Get historical price data for a stock
+ *     tags: [Stocks]
+ *     parameters:
+ *       - in: path
+ *         name: symbol
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Stock symbol
+ *       - in: query
+ *         name: period
+ *         schema:
+ *           type: string
+ *           enum: [1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max]
+ *           default: 1mo
+ *         description: Time period for historical data
+ *       - in: query
+ *         name: interval
+ *         schema:
+ *           type: string
+ *           enum: [1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 1d, 5d, 1wk, 1mo, 3mo]
+ *           default: 1d
+ *         description: Data interval
+ *     responses:
+ *       200:
+ *         description: Historical price data
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 symbol:
+ *                   type: string
+ *                 period:
+ *                   type: string
+ *                 interval:
+ *                   type: string
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       date:
+ *                         type: string
+ *                         format: date-time
+ *                       open:
+ *                         type: number
+ *                       high:
+ *                         type: number
+ *                       low:
+ *                         type: number
+ *                       close:
+ *                         type: number
+ *                       volume:
+ *                         type: number
+ *       404:
+ *         description: Stock not found
+ */
+router.get('/:symbol/historical', getStockBySymbolValidation, handleValidationErrors, getStockHistoricalData);
+
+/**
+ * @swagger
+ * /api/stocks/{symbol}/refresh:
+ *   post:
+ *     summary: Refresh all data for a stock (price, historical, technical)
+ *     tags: [Stocks]
+ *     parameters:
+ *       - in: path
+ *         name: symbol
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Stock symbol
+ *     responses:
+ *       200:
+ *         description: Data refresh initiated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 symbol:
+ *                   type: string
+ *       404:
+ *         description: Stock not found
+ */
+router.post('/:symbol/refresh', getStockBySymbolValidation, handleValidationErrors, refreshStockData);
 
 /**
  * @swagger

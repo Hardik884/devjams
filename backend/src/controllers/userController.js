@@ -9,6 +9,10 @@ const logger = require('../utils/logger');
  */
 const register = async (req, res, next) => {
   try {
+    console.log('📝 Registration request received');
+    console.log('Request body:', req.body);
+    console.log('JWT_SECRET_KEY exists:', !!process.env.JWT_SECRET_KEY);
+    
     const { firstName, lastName, email, password } = req.body;
 
     // Check if user already exists
@@ -20,6 +24,8 @@ const register = async (req, res, next) => {
       });
     }
 
+    console.log('💾 Creating new user...');
+    
     // Create user
     const user = new User({
       firstName,
@@ -28,8 +34,20 @@ const register = async (req, res, next) => {
       password,
     });
 
-    await user.save();
+    console.log('💾 Saving user to database...');
+    console.log('JWT_SECRET_KEY just before save:', !!process.env.JWT_SECRET_KEY);
+    console.log('User object before save:', { firstName, lastName, email, passwordExists: !!password });
+    
+    try {
+      await user.save();
+      console.log('✅ User saved successfully');
+    } catch (saveError) {
+      console.error('❌ Error during user.save():', saveError.message);
+      console.error('❌ Full save error:', saveError);
+      throw saveError;
+    }
 
+    console.log('🔑 Generating JWT token...');
     // Generate token
     const token = user.getSignedJwtToken();
 
@@ -41,6 +59,7 @@ const register = async (req, res, next) => {
       user,
     });
   } catch (error) {
+    console.error('❌ Registration error:', error);
     next(error);
   }
 };

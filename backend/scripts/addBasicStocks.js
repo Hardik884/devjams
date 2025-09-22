@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-require('dotenv').config({ path: '.env.development' });
+require('dotenv').config({ path: '.env' });
 
 const Stock = require('../src/models/Stock');
 

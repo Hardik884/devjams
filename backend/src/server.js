@@ -1,3 +1,6 @@
+// Load environment variables from .env FIRST before any other imports
+require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -6,9 +9,6 @@ const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const swaggerJSDoc = require('swagger-jsdoc');
 const swaggerUi = require('swagger-ui-express');
-
-// Load environment variables from .env
-require('dotenv').config();
 
 const logger = require('./utils/logger');
 const errorHandler = require('./middleware/errorHandler');
@@ -71,8 +71,13 @@ const limiter = rateLimit({
 // Middleware
 app.use(helmet()); // Security headers
 app.use(cors({
-  origin: process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : ['http://localhost:3000'],
-  credentials: true,
+  origin: [
+    'http://localhost:3000',
+    'http://localhost:3001', 
+    'http://localhost:5173',
+    'http://127.0.0.1:5173'
+  ],
+  credentials: true
 }));
 app.use(compression()); // Compress responses
 app.use(morgan('combined', { stream: { write: message => logger.info(message.trim()) } })); // Logging

@@ -608,14 +608,32 @@ class IndianStockDataService {
   /**
    * Fetch historical prices for technical analysis
    */
-  async fetchHistoricalPrices(symbol, period = '3mo') {
+  async fetchHistoricalPrices(symbol, period = '3mo', interval = '1d') {
     try {
       const formattedSymbol = this.formatSymbolForAPI(symbol, 'NSE');
+      
+      // Convert period to Unix timestamps
+      const periodMap = {
+        '1d': 1 * 24 * 60 * 60,
+        '5d': 5 * 24 * 60 * 60,
+        '1mo': 30 * 24 * 60 * 60,
+        '3mo': 90 * 24 * 60 * 60,
+        '6mo': 180 * 24 * 60 * 60,
+        '1y': 365 * 24 * 60 * 60,
+        '2y': 730 * 24 * 60 * 60,
+        '5y': 1825 * 24 * 60 * 60,
+        'max': 3650 * 24 * 60 * 60 // 10 years as max
+      };
+
+      const periodSeconds = periodMap[period] || periodMap['3mo'];
+      const now = Math.floor(Date.now() / 1000);
+      const startTime = now - periodSeconds;
+
       const response = await axios.get(`${this.baseURLs.yahoo}/v8/finance/chart/${formattedSymbol}`, {
         params: {
-          period1: Math.floor(Date.now() / 1000) - (90 * 24 * 60 * 60), // 3 months ago
-          period2: Math.floor(Date.now() / 1000), // now
-          interval: '1d'
+          period1: startTime,
+          period2: now,
+          interval: interval
         },
         timeout: 10000,
         headers: {
